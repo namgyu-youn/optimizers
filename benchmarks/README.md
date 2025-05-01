@@ -1,6 +1,6 @@
 # Preconditioner Benchmark
 
-This benchmark compares different preconditioners vin [shampoo_preconditioner_list.py](https://github.com/facebookresearch/optimizers/blob/main/distributed_shampoo/utils/shampoo_preconditioner_list.py). It illustrate total time, time per epochs, and total memory-usage.
+This benchmark compares different preconditioners in [shampoo_preconditioner_list.py](https://github.com/facebookresearch/optimizers/blob/main/distributed_shampoo/utils/shampoo_preconditioner_list.py). It illustrates total time, time per epoch, and total GPU usage.
 
 ### Usage
 
