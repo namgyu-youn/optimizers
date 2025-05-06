@@ -2,7 +2,6 @@ import logging
 import os
 import sys
 import time
-from typing import Any, Dict, List
 
 import torch
 
@@ -60,12 +59,12 @@ class MockBlockInfo:
 class PreconditionerBenchmark:
     def __init__(
         self,
-        param_shapes: List[tuple],
+        param_shapes: list[tuple[int, ...]],
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         self.param_shapes = param_shapes
         self.device = device
-        self.state = {}  # Optimizer state
+        self.state = {}
         self.blocks = []
         self.block_infos = []
 
@@ -75,16 +74,17 @@ class PreconditionerBenchmark:
             self.state[param] = {}
 
             # Create blocks (using entire tensor as one block for simplicity)
-            block = param.data
-            block_info = MockBlockInfo(param, i, 0, device)
-
-            self.blocks.append(block)
-            self.block_infos.append(block_info)
+            self.blocks.append(param.data)
+            self.block_infos.append(MockBlockInfo(param, i, 0, device))
 
     def create_preconditioner(self, preconditioner_type: str) -> PreconditionerList:
         """Create various preconditioners"""
         block_list = tuple(self.blocks)
         block_info_list = tuple(self.block_infos)
+
+        # Common configs
+        beta2, epsilon = 1.0, 1e-12
+        use_bias_correction = True
 
         if preconditioner_type == "SGD":
             return SGDPreconditionerList(block_list=block_list)
@@ -94,22 +94,20 @@ class PreconditionerBenchmark:
                 block_list=block_list,
                 state=self.state,
                 block_info_list=block_info_list,
-                beta2=1.0,
-                epsilon=1e-12,
+                beta2=beta2,
+                epsilon=epsilon,
                 use_bias_correction=False,
             )
 
         elif preconditioner_type == "Shampoo":
-            # Using matrix_inverse_root by default
-            config = ShampooPreconditionerConfig()
             return RootInvShampooPreconditionerList(
                 block_list=block_list,
                 state=self.state,
                 block_info_list=block_info_list,
-                preconditioner_config=config,
-                beta2=1.0,
-                epsilon=1e-12,
-                use_bias_correction=True,
+                preconditioner_config=ShampooPreconditionerConfig(),
+                beta2=beta2,
+                epsilon=epsilon,
+                use_bias_correction=use_bias_correction,
                 factor_matrix_dtype=torch.float,
             )
 
@@ -124,9 +122,9 @@ class PreconditionerBenchmark:
                 state=self.state,
                 block_info_list=block_info_list,
                 preconditioner_config=config,
-                beta2=1.0,
-                epsilon=1e-12,
-                use_bias_correction=True,
+                beta2=beta2,
+                epsilon=epsilon,
+                use_bias_correction=use_bias_correction,
                 factor_matrix_dtype=torch.float,
             )
 
@@ -141,9 +139,9 @@ class PreconditionerBenchmark:
                 state=self.state,
                 block_info_list=block_info_list,
                 preconditioner_config=config,
-                beta2=1.0,
-                epsilon=1e-12,
-                use_bias_correction=True,
+                beta2=beta2,
+                epsilon=epsilon,
+                use_bias_correction=use_bias_correction,
                 factor_matrix_dtype=torch.float,
             )
 
@@ -156,7 +154,7 @@ class PreconditionerBenchmark:
         preconditioner_type: str,
         num_epochs: int = 100,
         precondition_frequency: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, any]:
         """Run benchmark for a preconditioner"""
         logger.info(f"Starting benchmark for {preconditioner_type}")
 
@@ -178,13 +176,8 @@ class PreconditionerBenchmark:
             epoch_start_time = time.time()
             step = torch.tensor(epoch + 1, dtype=torch.int64, device=self.device)
 
-            # Generate dummy gradients
-            grad_list = []
-            for block in self.blocks:
-                grad = (
-                    torch.randn_like(block) * 0.01
-                )  # Scale gradients to simulate realistic scenario
-                grad_list.append(grad)
+            # Generate dummy gradients (scaled by 0.01 to simulate realistic scenario)
+            grad_list = [torch.randn_like(block) * 0.01 for block in self.blocks]
 
             # Update preconditioner
             perform_amortized = (epoch + 1) % precondition_frequency == 0
@@ -226,7 +219,7 @@ class PreconditionerBenchmark:
 
         return results
 
-    def run_all_benchmarks(self, num_epochs: int = 100) -> Dict[str, Any]:
+    def run_all_benchmarks(self, num_epochs: int = 100) -> dict[str, any]:
         """Run benchmarks for all preconditioners"""
         preconditioner_types = [
             "SGD",
@@ -239,18 +232,11 @@ class PreconditionerBenchmark:
         all_results = {}
 
         for preconditioner_type in preconditioner_types:
-            try:
-                preconditioner = self.create_preconditioner(preconditioner_type)
-                result = self.benchmark_preconditioner(
-                    preconditioner, preconditioner_type, num_epochs=num_epochs
-                )
-                all_results[preconditioner_type] = result
-            except Exception as e:
-                logger.error(f"Failed to benchmark {preconditioner_type}: {e}")
-                import traceback
-
-                logger.error(traceback.format_exc())
-                continue
+            preconditioner = self.create_preconditioner(preconditioner_type)
+            result = self.benchmark_preconditioner(
+                preconditioner, preconditioner_type, num_epochs=num_epochs
+            )
+            all_results[preconditioner_type] = result
 
         # Print summary
         logger.info("=" * 60)
