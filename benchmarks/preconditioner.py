@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import time
+from typing import Any
 
 import torch
 
@@ -154,7 +155,7 @@ class PreconditionerBenchmark:
         preconditioner_type: str,
         num_epochs: int = 100,
         precondition_frequency: int = 5,
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         """Run benchmark for a preconditioner"""
         logger.info(f"Starting benchmark for {preconditioner_type}")
 
@@ -219,7 +220,7 @@ class PreconditionerBenchmark:
 
         return results
 
-    def run_all_benchmarks(self, num_epochs: int = 100) -> dict[str, any]:
+    def run_all_benchmarks(self, num_epochs: int = 100) -> dict[str, Any]:
         """Run benchmarks for all preconditioners"""
         preconditioner_types = [
             "SGD",
