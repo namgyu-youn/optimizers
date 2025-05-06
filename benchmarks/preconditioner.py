@@ -2,9 +2,10 @@ import logging
 import os
 import sys
 import time
-from typing import Any
+from typing import Any, cast, Mapping, Sequence, TypeVar
 
 import torch
+from distributed_shampoo.utils.shampoo_block_info import BlockInfo
 
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,6 +22,8 @@ from distributed_shampoo.utils.shampoo_preconditioner_list import (
     RootInvShampooPreconditionerList,
     SGDPreconditionerList,
 )
+
+T = TypeVar("T")
 
 # Set logger config
 logging.basicConfig(
@@ -60,14 +63,14 @@ class MockBlockInfo:
 class PreconditionerBenchmark:
     def __init__(
         self,
-        param_shapes: list[tuple[int, ...]],
+        param_shapes: Sequence[tuple[int, ...]],
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         self.param_shapes = param_shapes
         self.device = device
-        self.state = {}
-        self.blocks = []
-        self.block_infos = []
+        self.state: Mapping[torch.Tensor, Any] = {}
+        self.blocks: list[torch.Tensor] = []
+        self.block_infos: list[MockBlockInfo] = []
 
         # Prepare parameters and blocks
         for i, shape in enumerate(param_shapes):
@@ -81,7 +84,7 @@ class PreconditionerBenchmark:
     def create_preconditioner(self, preconditioner_type: str) -> PreconditionerList:
         """Create various preconditioners"""
         block_list = tuple(self.blocks)
-        block_info_list = tuple(self.block_infos)
+        block_info_list = cast(tuple[BlockInfo, ...], tuple(self.block_infos))
 
         # Common configs
         beta2, epsilon = 1.0, 1e-12
@@ -132,14 +135,14 @@ class PreconditionerBenchmark:
         elif preconditioner_type == "EigenvalueCorrectedShampoo":
             from matrix_functions_types import QREigendecompositionConfig
 
-            config = EigenvalueCorrectedShampooPreconditionerConfig(
+            evc_config = EigenvalueCorrectedShampooPreconditionerConfig(
                 amortized_computation_config=QREigendecompositionConfig(),
             )
             return EigenvalueCorrectedShampooPreconditionerList(
                 block_list=block_list,
                 state=self.state,
                 block_info_list=block_info_list,
-                preconditioner_config=config,
+                preconditioner_config=evc_config,
                 beta2=beta2,
                 epsilon=epsilon,
                 use_bias_correction=use_bias_correction,
@@ -159,7 +162,7 @@ class PreconditionerBenchmark:
         """Run benchmark for a preconditioner"""
         logger.info(f"Starting benchmark for {preconditioner_type}")
 
-        results = {
+        results: dict[str, Any] = {
             "preconditioner": preconditioner_type,
             "epochs": [],
             "total_time": 0.0,
