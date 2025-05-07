@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any, cast, Mapping, Sequence, TypeVar
 
 import torch
@@ -28,7 +29,7 @@ T = TypeVar("T")
 # Set logger config
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(message)s",
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
@@ -60,7 +61,92 @@ class MockBlockInfo:
         return tensor
 
 
+@dataclass
+class PreconditionerConfig:
+    """Common configuration for all preconditioners."""
+
+    beta2: float = 1.0
+    epsilon: float = 1e-12
+    use_bias_correction: bool = True
+    factor_matrix_dtype: torch.dtype = torch.float
+
+
+class PreconditionerFactory:
+    """Factory for creating preconditioners."""
+
+    @staticmethod
+    def create(
+        preconditioner_type: str,
+        block_list: tuple[torch.Tensor, ...],
+        block_info_list: tuple[BlockInfo, ...],
+        state: Mapping[torch.Tensor, Any],
+        config: PreconditionerConfig,
+    ) -> PreconditionerList:
+        if preconditioner_type == "SGD":
+            return SGDPreconditionerList(block_list=block_list)
+
+        if preconditioner_type == "AdaGrad":
+            return AdagradPreconditionerList(
+                block_list=block_list,
+                state=state,
+                block_info_list=block_info_list,
+                beta2=config.beta2,
+                epsilon=config.epsilon,
+                use_bias_correction=False,
+            )
+
+        if preconditioner_type == "Shampoo":
+            return RootInvShampooPreconditionerList(
+                block_list=block_list,
+                state=state,
+                block_info_list=block_info_list,
+                preconditioner_config=ShampooPreconditionerConfig(),
+                beta2=config.beta2,
+                epsilon=config.epsilon,
+                use_bias_correction=config.use_bias_correction,
+                factor_matrix_dtype=config.factor_matrix_dtype,
+            )
+
+        if preconditioner_type == "EigendecomposedShampoo":
+            from matrix_functions_types import QREigendecompositionConfig
+
+            eigen_config = ShampooPreconditionerConfig(
+                amortized_computation_config=QREigendecompositionConfig(),
+            )
+            return EigendecomposedShampooPreconditionerList(
+                block_list=block_list,
+                state=state,
+                block_info_list=block_info_list,
+                preconditioner_config=eigen_config,
+                beta2=config.beta2,
+                epsilon=config.epsilon,
+                use_bias_correction=config.use_bias_correction,
+                factor_matrix_dtype=config.factor_matrix_dtype,
+            )
+
+        if preconditioner_type == "EigenvalueCorrectedShampoo":
+            from matrix_functions_types import QREigendecompositionConfig
+
+            evc_config = EigenvalueCorrectedShampooPreconditionerConfig(
+                amortized_computation_config=QREigendecompositionConfig(),
+            )
+            return EigenvalueCorrectedShampooPreconditionerList(
+                block_list=block_list,
+                state=state,
+                block_info_list=block_info_list,
+                preconditioner_config=evc_config,
+                beta2=config.beta2,
+                epsilon=config.epsilon,
+                use_bias_correction=config.use_bias_correction,
+                factor_matrix_dtype=config.factor_matrix_dtype,
+            )
+
+        raise ValueError(f"Unknown preconditioner type: {preconditioner_type}")
+
+
 class PreconditionerBenchmark:
+    """Benchmark different preconditioners."""
+
     def __init__(
         self,
         param_shapes: Sequence[tuple[int, ...]],
@@ -68,9 +154,10 @@ class PreconditionerBenchmark:
     ):
         self.param_shapes = param_shapes
         self.device = device
-        self.state: Mapping[torch.Tensor, Any] = {}
+        self.state: dict[torch.Tensor, Any] = {}
         self.blocks: list[torch.Tensor] = []
         self.block_infos: list[MockBlockInfo] = []
+        self.preconditioner_config = PreconditionerConfig()
 
         # Prepare parameters and blocks
         for i, shape in enumerate(param_shapes):
@@ -82,75 +169,14 @@ class PreconditionerBenchmark:
             self.block_infos.append(MockBlockInfo(param, i, 0, device))
 
     def create_preconditioner(self, preconditioner_type: str) -> PreconditionerList:
-        """Create various preconditioners"""
-        block_list = tuple(self.blocks)
-        block_info_list = cast(tuple[BlockInfo, ...], tuple(self.block_infos))
-
-        # Common configs
-        beta2, epsilon = 1.0, 1e-12
-        use_bias_correction = True
-
-        if preconditioner_type == "SGD":
-            return SGDPreconditionerList(block_list=block_list)
-
-        elif preconditioner_type == "AdaGrad":
-            return AdagradPreconditionerList(
-                block_list=block_list,
-                state=self.state,
-                block_info_list=block_info_list,
-                beta2=beta2,
-                epsilon=epsilon,
-                use_bias_correction=False,
-            )
-
-        elif preconditioner_type == "Shampoo":
-            return RootInvShampooPreconditionerList(
-                block_list=block_list,
-                state=self.state,
-                block_info_list=block_info_list,
-                preconditioner_config=ShampooPreconditionerConfig(),
-                beta2=beta2,
-                epsilon=epsilon,
-                use_bias_correction=use_bias_correction,
-                factor_matrix_dtype=torch.float,
-            )
-
-        elif preconditioner_type == "EigendecomposedShampoo":
-            from matrix_functions_types import QREigendecompositionConfig
-
-            config = ShampooPreconditionerConfig(
-                amortized_computation_config=QREigendecompositionConfig(),
-            )
-            return EigendecomposedShampooPreconditionerList(
-                block_list=block_list,
-                state=self.state,
-                block_info_list=block_info_list,
-                preconditioner_config=config,
-                beta2=beta2,
-                epsilon=epsilon,
-                use_bias_correction=use_bias_correction,
-                factor_matrix_dtype=torch.float,
-            )
-
-        elif preconditioner_type == "EigenvalueCorrectedShampoo":
-            from matrix_functions_types import QREigendecompositionConfig
-
-            evc_config = EigenvalueCorrectedShampooPreconditionerConfig(
-                amortized_computation_config=QREigendecompositionConfig(),
-            )
-            return EigenvalueCorrectedShampooPreconditionerList(
-                block_list=block_list,
-                state=self.state,
-                block_info_list=block_info_list,
-                preconditioner_config=evc_config,
-                beta2=beta2,
-                epsilon=epsilon,
-                use_bias_correction=use_bias_correction,
-                factor_matrix_dtype=torch.float,
-            )
-
-        else:
-            raise ValueError(f"Unknown preconditioner type: {preconditioner_type}")
+        """Create a preconditioner of the specified type."""
+        return PreconditionerFactory.create(
+            preconditioner_type,
+            tuple(self.blocks),
+            cast(tuple[BlockInfo, ...], tuple(self.block_infos)),
+            self.state,
+            self.preconditioner_config,
+        )
 
     def benchmark_preconditioner(
         self,
