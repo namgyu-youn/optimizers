@@ -160,6 +160,11 @@ class DDPDistributor(DistributorInterface):
         # Create flag for distributing parameters instead of search directions.
         self._communicate_params: bool = distributed_config.communicate_params
 
+        
+        # Configure the InfiniBand environment variables for NCCL.
+        os.environ["NCCL_IB_DISABLE"] = 0  # Enables InfiniBand for NCCL
+        os.environ["NCCL_DEBUG"] = "INFO"  # Enables NCCL debugging information
+
         # Initialize _dist_group and _group_rank.
         self._dist_group: dist.ProcessGroup | None = dist.new_subgroups(
             group_size=self._group_size
